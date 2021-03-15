@@ -650,8 +650,7 @@ export default class HlsjsPlayback extends HTML5Video {
     }
   }
 
-  getPreferredTextTrack()
-  {
+  getPreferredTextTrack() {
     let track = null
     let allTracks = this.closedCaptionsTracks
     let forcedTracks = allTracks.filter(t => t.attributes.forced)
@@ -665,8 +664,7 @@ export default class HlsjsPlayback extends HTML5Video {
     return track
   }
 
-  getTextTrackForLanguage(tracks)
-  {
+  getTextTrackForLanguage(tracks) {
     let track = null
     if (tracks.length > 0) {
       let lang = this.getPreferredLanguageCode().toUpperCase()
