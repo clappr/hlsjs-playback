@@ -5,7 +5,7 @@
 import { Events, HTML5Video, Log, Playback, PlayerError, Utils } from '@clappr/core'
 import HLSJS from 'hls.js'
 
-const { now, assign, listContainsIgnoreCase } = Utils
+const { now, assign, listContainsIgnoreCase, isNumber } = Utils
 
 const AUTO = -1
 
@@ -159,10 +159,10 @@ export default class HlsjsPlayback extends HTML5Video {
 
   _setup() {
     this._ccIsSetup = false
-    this._ccTracksUpdated = false
     this._hls && this._hls.destroy()
     this._hls = new HLSJS(assign({}, this.options.playback.hlsjsConfig))
     this._hls.once(HLSJS.Events.MEDIA_ATTACHED, () => this._hls.loadSource(this.options.src))
+    this._hls.on(HLSJS.Events.MANIFEST_LOADED, (evt, data) => this._onManifestParsed(evt, data))
     this._hls.on(HLSJS.Events.LEVEL_LOADED, (evt, data) => this._updatePlaybackType(evt, data))
     this._hls.on(HLSJS.Events.LEVEL_UPDATED, (evt, data) => this._onLevelUpdated(evt, data))
     this._hls.on(HLSJS.Events.LEVEL_SWITCHING, (evt,data) => this._onLevelSwitch(evt, data))
@@ -170,8 +170,7 @@ export default class HlsjsPlayback extends HTML5Video {
     this._hls.on(HLSJS.Events.FRAG_LOADED, (evt, data) => this._onFragmentLoaded(evt, data))
     this._hls.on(HLSJS.Events.FRAG_PARSING_METADATA, (evt, data) => this._onFragmentParsingMetadata(evt, data))
     this._hls.on(HLSJS.Events.ERROR, (evt, data) => this._onHLSJSError(evt, data))
-    this._hls.on(HLSJS.Events.SUBTITLE_TRACK_LOADED, (evt, data) => this._onSubtitleLoaded(evt, data))
-    this._hls.on(HLSJS.Events.SUBTITLE_TRACKS_UPDATED, () => this._ccTracksUpdated = true)
+    this._hls.on(HLSJS.Events.SUBTITLE_TRACK_SWITCH, (evt, data) => this._onSubtitleTrackSwitch(evt, data))
     this._hls.attachMedia(this.el)
   }
 
@@ -450,11 +449,6 @@ export default class HlsjsPlayback extends HTML5Video {
   _updatePlaybackType(evt, data) {
     this._playbackType = data.details.live ? Playback.LIVE : Playback.VOD
     this._onLevelUpdated(evt, data)
-
-    // Live stream subtitle tracks detection hack (may not immediately available)
-    if (this._ccTracksUpdated && this._playbackType === Playback.LIVE && this.hasClosedCaptionsTracks)
-      this._onSubtitleLoaded()
-
   }
 
   _fillLevels() {
@@ -599,17 +593,6 @@ export default class HlsjsPlayback extends HTML5Video {
     this.trigger(Events.PLAYBACK_FRAGMENT_LOADED, data)
   }
 
-  _onSubtitleLoaded() {
-    // This event may be triggered multiple times
-    // Setup CC only once (disable CC by default)
-    if (!this._ccIsSetup) {
-      this.trigger(Events.PLAYBACK_SUBTITLE_AVAILABLE)
-      const trackId = this._playbackType === Playback.LIVE ? -1 : this.closedCaptionsTrackId
-      this.closedCaptionsTrackId = trackId
-      this._ccIsSetup = true
-    }
-  }
-
   _onLevelSwitch(evt, data) {
     if (!this.levels.length)
       this._fillLevels()
@@ -645,6 +628,110 @@ export default class HlsjsPlayback extends HTML5Video {
 
   isSeekEnabled() {
     return (this._playbackType === Playback.VOD || this.dvrEnabled)
+  }
+
+  _onManifestParsed() {
+    if (this.hasClosedCaptionsTracks)
+      this._onSubtitleLoaded()
+  }
+
+  _onSubtitleLoaded() {
+    // This event may be triggered multiple times
+    // Setup CC only once (disable CC by default)
+    if (!this._ccIsSetup) {
+      let trackId = this._playbackType === Playback.LIVE ? -1 : this._hls.subtitleTrackController.subtitleTrack
+      // At the time of this writing, our auto-selection logic is better than what hls.js includes.
+      let preferredTrack = this.getPreferredTextTrack()
+      if (preferredTrack)
+        trackId = preferredTrack.id
+      this.closedCaptionsTrackId = trackId
+      this._ccIsSetup = true
+      this.trigger(Events.PLAYBACK_SUBTITLE_AVAILABLE)
+    }
+  }
+
+  getPreferredTextTrack() {
+    let track = null
+    let allTracks = this.closedCaptionsTracks
+    let forcedTracks = allTracks.filter(t => t.attributes.forced)
+    if (forcedTracks.length > 0) {
+      track = this.getTextTrackForLanguage(forcedTracks.filter(t => t.attributes.default))
+      if (!track) track = this.getTextTrackForLanguage(forcedTracks.filter(t => t.attributes.autoselect))
+      if (!track) track = this.getTextTrackForLanguage(forcedTracks)
+    }
+    if (!track)
+      track = this.getTextTrackForLanguage(allTracks.filter(t => t.attributes.forced))
+    return track
+  }
+
+  getTextTrackForLanguage(tracks) {
+    let track = null
+    if (tracks.length > 0) {
+      let lang = this.getPreferredLanguageCode().toUpperCase()
+      track = tracks.find(t => t.track.language.toUpperCase() === lang)
+      if (!track) track = tracks.find(t => t.track.language.toUpperCase().indexOf(lang) > -1)
+      if (!track) track = tracks.find(t => lang.indexOf(t.track.language.toUpperCase()) > -1)
+      if (!track) track = tracks[0]
+    }
+    return track
+  }
+  
+  getPreferredLanguageCode() {
+    try {
+      return navigator.userLanguage || (navigator.languages && navigator.languages.length && navigator.languages[0]) || navigator.language || navigator.browserLanguage || navigator.systemLanguage || 'en'
+    } catch (ex) {
+      return 'en'
+    }
+  }
+  
+  get closedCaptionsTracks() {
+    let textTracks = super.closedCaptionsTracks
+    // Here we extend what the base class provided.
+    for (let i = 0; i < textTracks.length; i++) {
+      let hlsCaptionsTrack = this.getHlsCaptionsTrack(textTracks[i].id)
+      if (hlsCaptionsTrack)
+        textTracks[i].attributes = { autoselect: hlsCaptionsTrack.autoselect, default: hlsCaptionsTrack.default, forced: hlsCaptionsTrack.forced }
+    }
+    return textTracks
+  }
+
+  getHlsCaptionsTrack(trackId) {
+    for (let i = 0; i < this._hls.subtitleTrackController.subtitleTracks.length; i++) {
+      if (this._hls.subtitleTrackController.subtitleTracks[i].id === trackId)
+        return this._hls.subtitleTrackController.subtitleTracks[i]
+    }
+    return null
+  }
+
+  get closedCaptionsTrackId() {
+    return this._ccTrackId
+  }
+
+  set closedCaptionsTrackId(trackId) {
+    // This property overrides the one in html5_video playback (core).
+    if (!isNumber(trackId))
+      return
+    // Instruct hls.js to switch the active subtitle track.
+    // This should trigger _onSubtitleTrackSwitch which is where we set _ccTrackId and raise our own event.
+    this._hls.subtitleDisplay = trackId !== -1
+    this._hls.subtitleTrack = trackId
+  }
+
+  _onSubtitleTrackSwitch(evt, data) {
+    // This is called the active subtitle track has been switched.
+    let trackId = data.id
+    if (!isNumber(trackId))
+      return
+
+    if (this.closedCaptionsTracks.length === 0)
+      return // Text tracks have not yet been loaded into the DOM by hls.js
+
+    if (this._ccTrackId !== trackId) {
+      this._ccTrackId = trackId
+      this.trigger(Events.PLAYBACK_SUBTITLE_CHANGED, {
+        id: trackId
+      })
+    }
   }
 }
 
