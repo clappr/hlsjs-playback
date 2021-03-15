@@ -630,7 +630,7 @@ export default class HlsjsPlayback extends HTML5Video {
     return (this._playbackType === Playback.VOD || this.dvrEnabled)
   }
 
-  _onManifestParsed(evt, data) {
+  _onManifestParsed() {
     if (this.hasClosedCaptionsTracks)
       this._onSubtitleLoaded()
   }
