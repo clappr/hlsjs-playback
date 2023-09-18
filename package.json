@@ -40,8 +40,8 @@
     "hls.js": "^1.2.4"
   },
   "devDependencies": {
-    "@babel/core": "^7.22.17",
-    "@babel/preset-env": "^7.22.15",
+    "@babel/core": "^7.22.20",
+    "@babel/preset-env": "^7.22.20",
     "@clappr/core": "^0.6.1",
     "@rollup/plugin-babel": "^6.0.3",
     "@rollup/plugin-commonjs": "^25.0.4",
@@ -53,7 +53,8 @@
     "eslint": "^8.49.0",
     "hls.js": "^1.4.12",
     "jest": "^29.7.0",
-    "rollup": "^3.29.1",
+    "jest-environment-jsdom": "^29.7.0",
+    "rollup": "^3.29.2",
     "rollup-plugin-filesize": "^10.0.0",
     "rollup-plugin-livereload": "^2.0.5",
     "rollup-plugin-serve": "^2.0.2",
