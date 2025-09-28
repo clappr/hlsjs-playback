@@ -1,3 +1,6 @@
+# This project was moved to de Clappr Monorepo
+[clappr monorepo](https://github.com/clappr/clappr)
+
 # HlsjsPlayback
 
 A [Clappr](https://github.com/clappr/clappr) playback to play HTTP Live Streaming (HLS) based on the [hls.js](https://github.com/video-dev/hls.js).
